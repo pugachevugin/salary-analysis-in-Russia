@@ -10,9 +10,9 @@ st.set_page_config(page_title="Аналитический сервис 09.03.03"
 def load_and_clean_data():
     try:
         # Читаем инфляцию
-        df_inf = pd.read_excel('Statistic_Inflatio_Russia_3.xlsx')
+        df_inf = pd.read_excel('Statistic_Inflatio_Russia.xlsx')
         # Читаем зарплаты
-        df_zpl_raw = pd.read_excel('tab3-zpl_2025_3.xlsx')
+        df_zpl_raw = pd.read_excel('tab3-zpl_2025.xlsx')
         
         # ОЧИСТКА: Удаляем пустые строки и столбцы, если они есть
         df_inf = df_inf.dropna(how='all').dropna(axis=1, how='all')
