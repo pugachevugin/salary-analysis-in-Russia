@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # 1. Конфигурация страницы
-st.set_page_config(page_title="Аналитика экономики РФ 2000-2024", layout="wide")
+st.set_page_config(page_title="Аналитика экономики РФ 2000-2025", layout="wide")
 
 # 2. CSS стили для красоты и читаемости
 st.markdown("""
