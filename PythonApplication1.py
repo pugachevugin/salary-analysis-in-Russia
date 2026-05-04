@@ -23,8 +23,8 @@ st.markdown("""
 def load_data():
     try:
         # Чтение файлов Excel
-        df_inf = pd.read_excel('Statistic_Inflatio_Russia_3.xlsx')
-        df_zpl_wide = pd.read_excel('tab3-zpl_2025_3.xlsx')
+        df_inf = pd.read_excel('Statistic_Inflatio_Russia.xlsx')
+        df_zpl_wide = pd.read_excel('tab3-zpl_2025.xlsx')
         
         # Очистка названий столбцов
         df_inf.columns = df_inf.columns.str.strip()
