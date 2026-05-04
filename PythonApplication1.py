@@ -3,94 +3,93 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-# 1. Настройка страницы
-st.set_page_config(page_title="Аналитика экономики РФ", layout="wide")
+st.set_page_config(page_title="Ultimate Analytics 2026", layout="wide", initial_sidebar_state="expanded")
+
+# Стилизация для "красоты"
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    </style>
+    """, unsafe_style_error=True)
 
 @st.cache_data
 def load_data():
-    # Загрузка инфляции (используем новые русские заголовки)
     inf = pd.read_csv('Statistic_Inflatio_Russia_2.csv')
-    # Загрузка зарплат
     zpl_raw = pd.read_csv('tab3-zpl_2025_2.csv')
-    
-    # Трансформация зарплат в длинный формат
+    # Перевод в длинный формат
     zpl = zpl_raw.melt(id_vars=['Отрасль'], var_name='Год', value_name='Зарплата')
     zpl['Год'] = zpl['Год'].astype(int)
-    
-    # Объединение таблиц по колонке 'Год'
-    return pd.merge(zpl, inf, on='Год')
+    return pd.merge(zpl, inf, on='Год'), zpl_raw
 
-df = load_data()
+df, df_wide = load_data()
 
-# --- ГЛАВНЫЙ ИНТЕРФЕЙС ---
-st.title("📊 Экономический мониторинг (2000 – 2024)")
-st.markdown("Приложение для анализа взаимосвязи доходов населения и инфляционных процессов.")
+# --- ИНТЕРФЕЙС ---
+st.title("🚀 Аналитический дашборд: Экономика РФ 2000-2024")
+st.sidebar.image("https://img.icons8.com/fluency/96/analytics.png")
+st.sidebar.header("Параметры")
 
-# SIDEBAR
-st.sidebar.header("⚙️ Настройки")
-selected_industries = st.sidebar.multiselect(
-    "Выберите отрасли для сравнения:",
-    options=df['Отрасль'].unique(),
-    default=["ИТ и связь", "Средняя по РФ"]
+selected_inds = st.sidebar.multiselect(
+    "Выберите отрасли:", df['Отрасль'].unique(), default=["ИТ и связь", "Средняя по РФ"]
 )
 
 # Фильтрация
-plot_df = df[df['Отрасль'].isin(selected_industries)].sort_values(['Отрасль', 'Год'])
+res = df[df['Отрасль'].isin(selected_inds)].sort_values(['Отрасль', 'Год'])
+res['Ном_Рост'] = res.groupby('Отрасль')['Зарплата'].pct_change() * 100
+res['Реал_Рост'] = res['Ном_Рост'] - res['Инфляция']
 
-# РАСЧЕТЫ (Пункт 4 задания)
-# Номинальный рост в %
-plot_df['Ном_Прирост'] = plot_df.groupby('Отрасль')['Зарплата'].pct_change() * 100
-# Реальный рост (за вычетом инфляции)
-plot_df['Реальный_Прирост'] = plot_df['Ном_Прирост'] - plot_df['Инфляция']
-
-# --- ВИЗУАЛИЗАЦИИ ---
-tab1, tab2, tab3 = st.tabs(["📈 Динамика зарплат", "🌡️ Инфляция и Ставка", "📄 Отчет и Данные"])
+# --- ВКЛАДКИ ---
+tab1, tab2, tab3, tab4 = st.tabs(["🔥 Тепловая карта", "📊 Тренды", "📉 Реальный рост", "📋 Таблицы"])
 
 with tab1:
-    st.subheader("Изменение номинальных зарплат (в рублях)")
-    fig_nom = px.line(plot_df, x='Год', y='Зарплата', color='Отрасль', 
-                     markers=True, labels={'Зарплата': 'Сумма (₽)', 'Год': 'Год'})
-    st.plotly_chart(fig_nom, use_container_width=True)
-    
-    st.subheader("Реальный прирост доходов (Пункт 5)")
-    fig_real = px.bar(plot_df.dropna(), x='Год', y='Реальный_Прирост', color='Отрасль', 
-                     barmode='group', title="Рост покупательной способности (%)",
-                     labels={'Реальный_Прирост': 'Прирост (%)', 'Год': 'Год'})
-    fig_real.add_hline(y=0, line_dash="dash", line_color="red")
-    st.plotly_chart(fig_real, use_container_width=True)
+    st.subheader("Карта интенсивности зарплат по годам")
+    # Подготовка данных для хитмапа
+    heat_data = df_wide.set_index('Отрасль')
+    fig_heat = px.imshow(
+        heat_data,
+        labels=dict(x="Год", y="Отрасль", color="Зарплата (₽)"),
+        color_continuous_scale='Viridis',
+        aspect="auto",
+        text_auto=".0f" # Показывает цифры внутри ячеек
+    )
+    fig_heat.update_layout(height=500)
+    st.plotly_chart(fig_heat, use_container_width=True)
+    st.caption("Хитмап наглядно показывает 'взрывной' рост в ИТ и Финансах после 2015 года.")
 
 with tab2:
-    st.subheader("Монетарный контекст: Инфляция vs Ключевая ставка")
-    # Группируем данные, чтобы не дублировать линии инфляции для каждой отрасли
-    context_df = df.drop_duplicates('Год').sort_values('Год')
-    
-    fig_context = go.Figure()
-    fig_context.add_trace(go.Scatter(x=context_df['Год'], y=context_df['Инфляция'], 
-                                   name="Инфляция (%)", line=dict(color='red', width=3)))
-    fig_context.add_trace(go.Bar(x=context_df['Год'], y=context_df['Ключевая_ставка'], 
-                                name="Ключевая ставка (%)", marker_color='rgba(100, 150, 250, 0.4)'))
-    
-    fig_context.update_layout(xaxis_title="Год", yaxis_title="Процент (%)", hovermode="x unified")
-    st.plotly_chart(fig_context, use_container_width=True)
-    st.info("График показывает, как Центральный Банк реагировал изменением ставки на всплески инфляции.")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.subheader("Линейные тренды")
+        fig_line = px.line(res, x='Год', y='Зарплата', color='Отрасль', markers=True,
+                          line_shape="spline", render_mode="svg")
+        st.plotly_chart(fig_line, use_container_width=True)
+    with col2:
+        st.subheader("Доли по отраслям (2024)")
+        latest = df[df['Год'] == 2024]
+        fig_pie = px.pie(latest, values='Зарплата', names='Отрасль', hole=0.4,
+                        color_discrete_sequence=px.colors.sequential.RdBu)
+    st.plotly_chart(fig_pie, use_container_width=True)
 
 with tab3:
-    st.subheader("Детальная таблица расчетов")
-    # Отображаем только важные колонки
-    display_cols = ['Отрасль', 'Год', 'Зарплата', 'Инфляция', 'Ключевая_ставка', 'Реальный_Прирост', 'Статус_инфляции']
+    st.subheader("Ежегодная гистограмма реального роста (Пункт 5)")
+    fig_bar = px.bar(res.dropna(), x='Год', y='Реал_Рост', color='Отрасль',
+                    barmode='group', title="Рост выше/ниже инфляции",
+                    color_discrete_sequence=px.colors.qualitative.Bold)
+    fig_bar.add_hline(y=0, line_dash="dash", line_color="black")
+    st.plotly_chart(fig_bar, use_container_width=True)
+    
+    st.subheader("Сравнение инфляции и ключевой ставки")
+    inf_data = df.drop_duplicates('Год')
+    fig_area = go.Figure()
+    fig_area.add_trace(go.Scatter(x=inf_data['Год'], y=inf_data['Инфляция'], fill='tozeroy', name='Инфляция'))
+    fig_area.add_trace(go.Scatter(x=inf_data['Год'], y=inf_data['Ключевая_ставка'], name='Ставка ЦБ'))
+    st.plotly_chart(fig_area, use_container_width=True)
+
+with tab4:
+    st.subheader("Детальная аналитика по каждому году")
     st.dataframe(
-        plot_df[display_cols].style.format({
-            'Зарплата': '{:,.0f} ₽', 
-            'Инфляция': '{:.2f}%', 
-            'Реальный_Прирост': '{:+.2f}%'
-        }).background_gradient(subset=['Реальный_Прирост'], cmap='RdYlGn'),
+        res[['Отрасль', 'Год', 'Зарплата', 'Инфляция', 'Реал_Рост', 'Статус_инфляции']]
+        .style.format({'Зарплата': '{:,.0f} ₽', 'Реал_Рост': '{:+.2f}%'})
+        .background_gradient(subset=['Реал_Рост'], cmap='RdYlGn'),
         use_container_width=True
     )
-    
-    st.divider()
-    st.markdown("### 📝 Аналитические выводы:")
-    if not plot_df.empty:
-        for ind in selected_industries:
-            ind_avg = plot_df[plot_df['Отрасль'] == ind]['Реальный_Прирост'].mean()
-            verdict = "опережает инфляцию" if ind_avg > 0 else "обесценивается инфляцией"
-            st.write(f"- В секторе **{ind}** средний реальный рост составляет **{ind_avg:.2f}%**. Это означает, что доход в данной сфере **{verdict}**.")
