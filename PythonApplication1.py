@@ -2,111 +2,73 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import re
-import os
 
-st.set_page_config(page_title="Анализ зарплат РФ", layout="wide")
+# Настройка страницы
+st.set_page_config(page_title="Мониторинг зарплат РФ", layout="wide")
 st.title("📊 Анализ зарплат в России (2017-2023)")
 
 @st.cache_data
-def load_and_clean_data():
-    try:
-        files_in_dir = os.listdir('.')
-        salary_file = 'tab3-zpl_2025.xlsx'
-        inflation_file = 'Statistic_Inflatio_Russia.xlsx'
+def load_data():
+    # Загружаем уже чистые файлы
+    df_inf = pd.read_excel('Statistic_Inflatio_Russia_2.xlsx')
+    df_zpl_wide = pd.read_excel('tab3-zpl_2025_2.xlsx')
+    
+    # Переводим таблицу зарплат из широкого формата в длинный (tidy data)
+    # Было: Industry | 2017 | 2018... Стало: Industry | Year | Salary
+    df_zpl = df_zpl_wide.melt(id_vars=['Industry'], var_name='Year', value_name='Salary')
+    
+    # Приводим типы данных
+    df_zpl['Year'] = df_zpl['Year'].astype(int)
+    df_inf['Year'] = df_inf['Year'].astype(int)
+    
+    # Объединяем зарплаты с инфляцией по году
+    df = pd.merge(df_zpl, df_inf, on='Year', how='left')
+    return df
 
-        if salary_file not in files_in_dir or inflation_file not in files_in_dir:
-            st.error(f"Файлы не найдены: {files_in_dir}")
-            return None, None
-
-        # 1. Инфляция
-        inf_df = pd.read_excel(inflation_file)
-        inf_df.columns = [str(c).strip() for c in inf_df.columns]
-        inf_df = inf_df.rename(columns={'Год': 'Year', 'Всего': 'Inflation_Rate'})
-        inf_df['Year'] = pd.to_numeric(inf_df['Year'], errors='coerce')
-        
-        # 2. Зарплаты
-        xls = pd.ExcelFile(salary_file)
-        sheet_name = 'с 2017 г.' if 'с 2017 г.' in xls.sheet_names else xls.sheet_names[0]
-        # Читаем всё как строки, чтобы не потерять данные из-за неверного авто-определения типов
-        df_raw = pd.read_excel(xls, sheet_name, header=None, dtype=str)
-        
-        header_idx = None
-        for i, row in df_raw.iterrows():
-            if any('2017' in str(val) for val in row.values):
-                header_idx = i
-                break
-        
-        if header_idx is None: return None, None
-
-        raw_headers = df_raw.iloc[header_idx].values
-        years_map = {idx: int(re.search(r'20\d{2}', str(h)).group()) 
-                     for idx, h in enumerate(raw_headers) if re.search(r'20\d{2}', str(h))}
-
-        rows_list = []
-        for i in range(header_idx + 1, len(df_raw)):
-            current_row = df_raw.iloc[i]
-            industry_raw = str(current_row[0]).strip()
-            
-            # Фильтр технических строк
-            if len(industry_raw) < 5 or industry_raw.startswith(('1)', '2)', '3)', '4)', '*)')):
-                continue
-
-            for col_idx, yr in years_map.items():
-                val = str(current_row[col_idx])
-                
-                # Удаляем ВСЕ нецифровые символы, кроме точки и запятой
-                # Включая неразрывные пробелы (\xa0) и обычные пробелы
-                clean_val = re.sub(r'[^\d.,]', '', val.split('(')[0].replace('\xa0', ''))
-                
-                if clean_val:
-                    try:
-                        # Заменяем запятую на точку для float
-                        num = float(clean_val.replace(',', '.'))
-                        # Если число похоже на зарплату (больше 100), сохраняем
-                        if num > 100: 
-                            rows_list.append({'Industry': industry_raw, 'Year': yr, 'Salary': num})
-                    except ValueError:
-                        continue
-        
-        if not rows_list:
-            # Если данных нет, выведем кусочек таблицы для диагностики
-            st.warning("Диагностика: Данные в первой строке после заголовка:")
-            st.code(df_raw.iloc[header_idx + 1].to_dict())
-            return None, None
-            
-        return pd.DataFrame(rows_list), inf_df[['Year', 'Inflation_Rate']].dropna()
-
-    except Exception as e:
-        st.error(f"Ошибка: {e}")
-        return None, None
-
-# Запуск
-df_salary, df_inf = load_and_clean_data()
-
-if df_salary is not None:
-    all_industries = sorted(df_salary['Industry'].unique())
-    selected = st.multiselect("Отрасли:", options=all_industries, 
-                              default=["Всего по экономике"] if "Всего по экономике" in all_industries else [all_industries[0]])
+try:
+    df = load_data()
+    
+    # Боковая панель с выбором отраслей
+    all_industries = sorted(df['Industry'].unique())
+    default_choice = ["Всего по экономике"] if "Всего по экономике" in all_industries else [all_industries[0]]
+    
+    selected = st.multiselect("Выберите отрасли для сравнения:", all_industries, default=default_choice)
 
     if selected:
-        final_df = df_salary[df_salary['Industry'].isin(selected)].copy()
-        final_df['Year'] = final_df['Year'].astype(int)
-        df_inf['Year'] = df_inf['Year'].astype(int)
+        # Фильтруем и считаем рост
+        filtered = df[df['Industry'].isin(selected)].sort_values(['Industry', 'Year'])
         
-        res = pd.merge(final_df, df_inf, on='Year', how='left').sort_values(['Industry', 'Year'])
-        res['Nominal_Growth'] = (res.groupby('Industry')['Salary'].pct_change()) * 100
-        res['Real_Growth'] = res['Nominal_Growth'] - res['Inflation_Rate']
+        # Расчет показателей: pct_change() дает изменение в долях, умножаем на 100 для %
+        filtered['Nominal_Growth'] = filtered.groupby('Industry')['Salary'].pct_change() * 100
+        filtered['Real_Growth'] = filtered['Nominal_Growth'] - filtered['Inflation']
 
-        st.subheader("Анализ")
+        # Блок графиков
         col1, col2 = st.columns(2)
+        
         with col1:
-            fig1, ax1 = plt.subplots()
-            sns.lineplot(data=res, x='Year', y='Salary', hue='Industry', marker='o')
+            st.subheader("Динамика зарплат (руб.)")
+            fig1, ax1 = plt.subplots(figsize=(10, 6))
+            sns.lineplot(data=filtered, x='Year', y='Salary', hue='Industry', marker='o', linewidth=2)
+            plt.grid(True, alpha=0.3)
             st.pyplot(fig1)
+
         with col2:
-            fig2, ax2 = plt.subplots()
-            sns.barplot(data=res.dropna(), x='Year', y='Real_Growth', hue='Industry')
-            plt.axhline(0, color='black', lw=1)
+            st.subheader("Реальный рост за год (%)")
+            st.caption("С учетом инфляции. Если выше 0 — покупательная способность выросла.")
+            fig2, ax2 = plt.subplots(figsize=(10, 6))
+            plot_data = filtered.dropna(subset=['Real_Growth'])
+            if not plot_data.empty:
+                sns.barplot(data=plot_data, x='Year', y='Real_Growth', hue='Industry')
+                plt.axhline(0, color='black', linewidth=1)
             st.pyplot(fig2)
-        st.dataframe(res)
+
+        # Таблица внизу
+        st.divider()
+        with st.expander("Посмотреть детальные данные"):
+            st.dataframe(filtered.style.format(subset=['Salary', 'Inflation', 'Nominal_Growth', 'Real_Growth'], precision=2))
+    else:
+        st.warning("Выберите хотя бы одну отрасль в списке выше.")
+
+except Exception as e:
+    st.error(f"Ошибка загрузки данных: {e}")
+    st.info("Убедитесь, что файлы 'tab3-zpl_2025_2.xlsx' и 'Statistic_Inflatio_Russia_2.xlsx' лежат в корне репозитория.")
