@@ -6,4 +6,4 @@
 * Загрузка данных Росстата из Excel.
 * Сравнение номинальных и реальных зарплат по отраслям.
 * Интерактивные графики с использованием Seaborn и Matplotlib.
-* https://salary-analysis-in-russia-6uyzbp3dmsy5we8v5tpptz.streamlit.app/
+* https://salary-analysis-in-russia-bsxvpnnuludwvolah7d4wx.streamlit.app/
