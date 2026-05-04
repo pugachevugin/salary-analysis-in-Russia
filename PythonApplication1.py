@@ -19,14 +19,14 @@ def load_and_clean_data():
         
         # 2. Загрузка зарплат
         xls = pd.ExcelFile('tab3-zpl_2025.xlsx')
-        # Читаем лист без пропуска строк, чтобы найти таблицу программно
         df_raw = pd.read_excel(xls, 'с 2017 г.')
         
-        # Ищем строку, где начинаются годы (2017, 2018...)
+        # Ищем строку, где начинаются годы (ИСПРАВЛЕНО: добавлена проверка на тип)
         header_idx = None
         for i, row in df_raw.iterrows():
-            row_str = row.astype(str).values
-            if any('2017' in s for s in row_str):
+            # Превращаем все элементы строки в текст, заменяя NaN на пустую строку
+            row_values_as_str = [str(val) if pd.notnull(val) else "" for val in row.values]
+            if any('2017' in s for s in row_values_as_str):
                 header_idx = i
                 break
         
@@ -34,18 +34,19 @@ def load_and_clean_data():
             st.error("Не удалось найти строку с годами в Excel-файле.")
             return None, None
 
-        # Перечитываем файл с правильного заголовка
+        # Читаем данные, пропуская всё до найденного заголовка
         df = pd.read_excel(xls, 'с 2017 г.', skiprows=header_idx + 1)
-        # Названия колонок из строки заголовка
-        cols = df_raw.iloc[header_idx].values
-        # Очищаем названия колонок (года)
+        
+        # Заголовки берем из найденной строки
+        raw_headers = df_raw.iloc[header_idx].values
         clean_cols = []
-        for c in cols:
-            match = re.search(r'20\d{2}', str(c))
-            clean_cols.append(match.group() if match else str(c).strip())
+        for c in raw_headers:
+            s_c = str(c)
+            match = re.search(r'20\d{2}', s_c)
+            clean_cols.append(match.group() if match else s_c.strip())
         df.columns = clean_cols
         
-        # Очистка первой колонки (отрасли)
+        # Чистим колонку отраслей (первая колонка)
         df.iloc[:, 0] = df.iloc[:, 0].astype(str).str.strip()
         
         return df, inf_df[['Year', 'Inflation_Rate']].dropna()
@@ -56,18 +57,21 @@ def load_and_clean_data():
 df_salary, df_inf = load_and_clean_data()
 
 if df_salary is not None:
-    # Фильтруем список отраслей
+    # Фильтруем отрасли, убирая мусор и короткие технические строки
     all_industries = sorted([
         str(x) for x in df_salary.iloc[:, 0].unique() 
         if pd.notnull(x) and len(str(x)) > 5 and not str(x).startswith(('1)', '2)', '3)'))
     ])
     
-    selected = st.multiselect("Выберите отрасли:", options=all_industries, 
-                              default=["Всего по экономике"] if "Всего по экономике" in all_industries else [all_industries[0]])
+    selected = st.multiselect(
+        "Выберите отрасли для анализа:", 
+        options=all_industries, 
+        default=["Всего по экономике"] if "Всего по экономике" in all_industries else [all_industries[0]]
+    )
 
     if selected:
         plot_data = []
-        # Определяем доступные колонки-годы
+        # Определяем колонки, которые являются годами (2017-2023)
         available_years = [c for c in df_salary.columns if re.match(r'20\d{2}', str(c))]
         
         for ind in selected:
@@ -75,38 +79,49 @@ if df_salary is not None:
             if not row.empty:
                 for yr in available_years:
                     val = row[yr].values[0]
-                    # Очистка от спецсимволов (неразрывные пробелы, сноски)
                     if pd.notnull(val):
                         try:
-                            s_val = str(val).split('(')[0] # Убираем сноски типа 50000(1)
+                            # Очистка: убираем сноски в скобках и лишние пробелы
+                            s_val = str(val).split('(')[0]
                             clean_val = float(s_val.replace('\xa0', '').replace(' ', '').replace(',', '.'))
                             plot_data.append({'Year': int(yr), 'Salary': clean_val, 'Industry': ind})
-                        except: continue
+                        except:
+                            continue
 
         if plot_data:
             final_df = pd.DataFrame(plot_data)
+            # Приводим к одному типу для слияния
+            final_df['Year'] = final_df['Year'].astype(int)
+            df_inf['Year'] = df_inf['Year'].astype(int)
+            
             final_df = pd.merge(final_df, df_inf, on='Year', how='left')
             final_df = final_df.sort_values(['Industry', 'Year'])
             
-            # Расчеты
+            # Расчет динамики
             final_df['Prev_Salary'] = final_df.groupby('Industry')['Salary'].shift(1)
             final_df['Nominal_Growth'] = (final_df['Salary'] / final_df['Prev_Salary'] - 1) * 100
             final_df['Real_Growth'] = final_df['Nominal_Growth'] - final_df['Inflation_Rate']
 
-            # Визуализация
-            st.subheader("Динамика зарплат и реальный рост")
-            fig1, ax1 = plt.subplots(figsize=(10, 4))
-            sns.lineplot(data=final_df, x='Year', y='Salary', hue='Industry', marker='o')
-            plt.title("Номинальная зарплата (руб.)")
-            st.pyplot(fig1)
-
-            fig2, ax2 = plt.subplots(figsize=(10, 4))
-            sns.barplot(data=final_df.dropna(subset=['Real_Growth']), x='Year', y='Real_Growth', hue='Industry')
-            plt.axhline(0, color='red', linestyle='--')
-            plt.title("Реальный рост зарплаты (с учетом инфляции), %")
-            st.pyplot(fig2)
+            # Отрисовка интерфейса
+            st.subheader("Визуализация данных")
+            col1, col2 = st.columns(2)
             
-            with st.expander("Открыть таблицу данных"):
+            with col1:
+                st.write("**Номинальная зарплата (руб.)**")
+                fig1, ax1 = plt.subplots()
+                sns.lineplot(data=final_df, x='Year', y='Salary', hue='Industry', marker='o')
+                plt.grid(True, alpha=0.3)
+                st.pyplot(fig1)
+
+            with col2:
+                st.write("**Реальный рост (за вычетом инфляции), %**")
+                fig2, ax2 = plt.subplots()
+                sns.barplot(data=final_df.dropna(subset=['Real_Growth']), x='Year', y='Real_Growth', hue='Industry')
+                plt.axhline(0, color='black', lw=1)
+                plt.xticks(rotation=45)
+                st.pyplot(fig2)
+            
+            with st.expander("Посмотреть итоговую таблицу"):
                 st.dataframe(final_df)
         else:
-            st.error("Числовые данные не найдены. Проверьте структуру Excel-файла.")
+            st.error("Не удалось извлечь числовые данные для выбранных отраслей.")
